@@ -1,0 +1,16 @@
+# easy-nginx proxy table. See bin/remake_conf in
+# https://github.com/james-stevens/easy-nginx
+#
+# Fields: <mode> <cert-name> <upstream> <server_name> [more server_names...]
+#   W  TLS proxy that sets Host, X-Real-IP, X-Forwarded-For and
+#      X-Forwarded-Proto (also enables WebSocket upgrade headers).
+#   P  TLS proxy that sets Host and X-Forwarded-For only.
+#   X  TLS proxy with proxy_pass and no forwarded headers.
+#   R  TLS 301 redirect; field 3 is the target URL.
+#
+# <cert-name> is the file name (without directory) of a PEM under
+# /opt/data/pems that contains BOTH the certificate and the private key.
+# easy-nginx points ssl_certificate and ssl_certificate_key at that same file.
+#
+# Replace upload.example.net with the public name of this host.
+W upload http://dns-host:8080 upload.example.net

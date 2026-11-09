@@ -1,0 +1,50 @@
+# Optional TLS terminator. Not used by `docker compose up` on its own.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up
+#
+# This is jamesstevens/easy-nginx (https://github.com/james-stevens/easy-nginx),
+# the owner's MIT-licensed nginx proxy. It is configured the way that image
+# actually works:
+#
+#   * NGINX_PLAIN_WEB must not be Y. That mode serves files from
+#     /opt/data/htdocs instead of proxying (bin/set_conf).
+#   * NGINX_NO_LOGGING=N keeps the syslog access log (bin/set_conf).
+#   * /opt/data/etc/nginx.input is the proxy table (bin/remake_conf).
+#     One line:  <mode> <cert-name> <upstream> <server_name>...
+#     Mode W is the line type that sets X-Forwarded-For and X-Forwarded-Proto.
+#   * /opt/data/pems/<cert-name>.pem must contain the certificate and the
+#     private key in one file. ssl_certificate and ssl_certificate_key both
+#     point at that file. The container will not serve TLS until this file
+#     exists. Port 80 redirects to https (nginx/nginx.conf).
+#   * The image is built to run read-only; /run is a symlink to /dev/shm.
+#
+# TRUSTED_PROXIES is the compose network below, so this service's nginx
+# honours forwarded headers only from the terminator.
+
+services:
+  dns-host:
+    environment:
+      TRUSTED_PROXIES: 172.28.9.0/24
+    networks:
+      - edge
+
+  tls-terminator:
+    image: jamesstevens/easy-nginx
+    read_only: true
+    depends_on:
+      - dns-host
+    environment:
+      NGINX_NO_LOGGING: "N"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/easy-nginx:/opt/data
+    networks:
+      - edge
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.28.9.0/24
