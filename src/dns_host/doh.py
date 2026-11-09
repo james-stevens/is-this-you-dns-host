@@ -20,6 +20,7 @@ import dns.rdata
 import dns.rdatatype
 
 from dns_host.names import normalise_name
+from dns_host.rrtypes import parse_type, rdata_from_text
 
 
 class LookupError(Exception):
@@ -35,7 +36,10 @@ class LookupRR:
     wire: bytes | None = None
 
     def to_rdata(self):
-        rdtype = dns.rdatatype.from_text(self.rdtype)
+        try:
+            rdtype = parse_type(self.rdtype)
+        except Exception:
+            rdtype = dns.rdatatype.from_text(self.rdtype)
         if self.wire is not None:
             try:
                 return dns.rdata.from_wire(
@@ -46,7 +50,7 @@ class LookupRR:
                     raise
         if not self.data:
             raise LookupError(f"RR {self.name}/{self.rdtype} has neither rdata nor data")
-        return dns.rdata.from_text(dns.rdataclass.IN, rdtype, self.data)
+        return rdata_from_text(rdtype, self.data)
 
 
 @dataclass

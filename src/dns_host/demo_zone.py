@@ -53,6 +53,15 @@ def main(argv: list[str] | None = None) -> None:
         extras=[
             (f"_auth.7e9a2f4c8b1d.{apex}", "TXT", ['"v=dnsauth1 alg=ES256 k=example"']),
             (f"_web._tcp.{apex}", "URI", ['10 1 "https://example.org/j"']),
+            (apex, "URI", ['10 1 "https://example.org/j"']),
+            (
+                apex,
+                "WALLET",
+                [
+                    '"btc" "bc1qexampleaddress"',
+                    '"eth" "0xabc" "cold wallet" "20"',
+                ],
+            ),
         ],
     )
     payload = json.dumps(document, indent=2) + "\n"

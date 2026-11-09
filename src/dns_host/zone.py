@@ -12,6 +12,7 @@ import dns.rrset
 
 from dns_host.errors import ApiError
 from dns_host.names import name_in_bailiwick, normalise_apex, normalise_name
+from dns_host.rrtypes import parse_type, rdata_from_text
 
 RRSIG = dns.rdatatype.RRSIG
 
@@ -102,7 +103,7 @@ def _add_group(grouped: dict, rrset: dns.rrset.RRset) -> None:
 def document_to_zone(apex: dns.name.Name, document: dict) -> ParsedZone:
     parsed = ParsedZone(apex=apex)
     for item in document["rrsets"]:
-        rdtype = dns.rdatatype.from_text(item["type"])
+        rdtype = parse_type(item["type"])
         name = normalise_name(item["name"])
         ttl = int(item["ttl"])
         rdatas = []
@@ -154,7 +155,7 @@ def parse_upload(body: dict, url_apex: dns.name.Name) -> ParsedZone:
                 f"{owner} is not at or below {apex}",
             )
         try:
-            rdtype = dns.rdatatype.from_text(str(item["type"]))
+            rdtype = parse_type(str(item["type"]))
         except Exception as exc:
             raise ApiError(400, "bad_request", f"rrsets[{index}].type is not a DNS type") from exc
         if not isinstance(item["ttl"], int) or isinstance(item["ttl"], bool) or item["ttl"] < 0:
@@ -175,11 +176,7 @@ def parse_upload(body: dict, url_apex: dns.name.Name) -> ParsedZone:
                 raise ApiError(400, "bad_request", f"rrsets[{index}] contains duplicate rdata")
             texts.add(data)
             try:
-                rdatas.append(
-                    dns.rdata.from_text(
-                        dns.rdataclass.IN, rdtype, data, origin=apex, relativize=False
-                    )
-                )
+                rdatas.append(rdata_from_text(rdtype, data, origin=apex))
             except Exception as exc:
                 raise ApiError(
                     400,

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from dns_host.app import create_app
-from dns_host.config import Settings
+from dns_host.config import DEFAULT_TYPES, Settings
 from dns_host.names import normalise_name
 from dns_host.notify import RecordingNotifier
 from dns_host.storage import Store
@@ -45,11 +45,7 @@ def settings(tmp_path: Path, clock, lab):
         dns_port=0,
         trust_anchors=[lab.root_ds],
         type_allowlist=frozenset(
-            item.strip().upper()
-            for item in (
-                "SOA,NS,A,AAAA,DNSKEY,RRSIG,NSEC3,NSEC3PARAM,NSEC,TXT,URI,CNAME,MX,SRV,"
-                "TLSA,CAA,PTR,OPENPGPKEY,SVCB,HTTPS,SMIMEA,HINFO,NAPTR,SPF"
-            ).split(",")
+            item.strip().upper() for item in DEFAULT_TYPES.split(",") if item.strip()
         ),
         health_check_dns=False,
         now_fn=clock,

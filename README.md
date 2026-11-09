@@ -108,7 +108,7 @@ Names are stored absolute, lowercased, with one trailing dot. Unicode labels are
 
 SOA serial is unix time. It must be greater than the serial already stored, not more than 5 minutes ahead of the service clock, and not older than one hour.
 
-User zones are NSEC3 as in RFC 9276: iterations 0, empty salt, Opt-Out off. An NSEC chain with no NSEC3PARAM is accepted for experiments. DNSKEY algorithm 13 only, with a flags-257 KSK. RRSIG lifetime is at most 30 days and the signature must be valid now.
+User zones are NSEC3 as in RFC 9276: iterations 0, empty salt, Opt-Out off. An NSEC chain with no NSEC3PARAM is accepted for experiments. DNSKEY algorithm 13 only, with a flags-257 KSK. RRSIG lifetime is at most 30 days and the signature must be valid now. WALLET (IANA type 262) is allowed. Each WALLET rdata is either two character-strings (type, identifier) or four (type, identifier, description, sort order). If the installed dnspython has no WALLET class, the same rdata is stored as RFC 3597 unknown-type wire.
 
 ### What the service checks, in order
 

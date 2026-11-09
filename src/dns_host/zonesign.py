@@ -16,6 +16,7 @@ import dns.rrset
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from dns_host.denial import expected_types, hash_label, zone_names_and_ents
+from dns_host.rrtypes import rdata_from_text
 
 ALG = dns.dnssec.ECDSAP256SHA256
 
@@ -38,16 +39,7 @@ def sign_rrset(rrset, private, dnskey, signer, inception: int, expiration: int):
 
 
 def _rr(name, rdtype, ttl, *texts, origin):
-    rdatas = [
-        dns.rdata.from_text(
-            dns.rdataclass.IN,
-            dns.rdatatype.from_text(rdtype),
-            text,
-            origin=origin,
-            relativize=False,
-        )
-        for text in texts
-    ]
+    rdatas = [rdata_from_text(rdtype, text, origin=origin) for text in texts]
     return dns.rrset.from_rdata(name, ttl, *rdatas)
 
 

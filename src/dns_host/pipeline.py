@@ -17,6 +17,7 @@ import dns.rrset
 from dns_host.chain import Delegation, authenticate_parent
 from dns_host.denial import check_nsec, check_nsec3
 from dns_host.errors import ApiError
+from dns_host.rrtypes import type_name
 from dns_host.zone import ParsedZone
 
 DNSKEY = int(dns.rdatatype.DNSKEY)
@@ -72,7 +73,7 @@ def check_soa(zone: ParsedZone, settings, held_serial: int | None) -> int:
 def check_types_and_ttl(zone: ParsedZone, settings) -> None:
     allowed = {item.upper() for item in settings.type_allowlist}
     for (name, rdtype), rrset in zone.rrsets.items():
-        text = dns.rdatatype.to_text(rdtype).upper()
+        text = type_name(rdtype)
         if text not in allowed:
             raise _err(422, "type_not_allowed", f"{text} is not in the type allowlist")
         if int(rrset.ttl) < settings.min_ttl or int(rrset.ttl) > settings.max_ttl:

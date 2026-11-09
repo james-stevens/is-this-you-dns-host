@@ -23,7 +23,7 @@ from dns_host.names import normalise_name
 _REPO_ANCHORS = Path(__file__).resolve().parents[2] / "deploy" / "root-anchors.ds"
 
 DEFAULT_TYPES = (
-    "SOA,NS,A,AAAA,DNSKEY,RRSIG,NSEC3,NSEC3PARAM,NSEC,TXT,URI,CNAME,MX,SRV,"
+    "SOA,NS,A,AAAA,DNSKEY,RRSIG,NSEC3,NSEC3PARAM,NSEC,TXT,URI,WALLET,CNAME,MX,SRV,"
     "TLSA,CAA,PTR,OPENPGPKEY,SVCB,HTTPS,SMIMEA,HINFO,NAPTR,SPF"
 )
 
