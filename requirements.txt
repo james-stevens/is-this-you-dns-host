@@ -1,0 +1,7 @@
+# Workstation and CI pins. The container image does not pip-install these;
+# it uses the Alpine 3.24 py3-* packages instead.
+flask==3.1.3
+gunicorn==23.0.0
+dnspython==2.7.0
+cryptography==50.0.2
+pyyaml==6.0.3

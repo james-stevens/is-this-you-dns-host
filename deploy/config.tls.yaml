@@ -1,0 +1,32 @@
+# Same as config.example.yaml, plus the easy-nginx compose network.
+service_ns:
+  - ns1.example.net.
+  - ns2.example.net.
+
+catalog_zone: catalog.example.net.
+catalog_rname: hostmaster.example.net.
+resolver_base_url: https://api.isthisyou.org/
+
+http_port: 80
+internal_http_port: 8081
+gunicorn_bind: 127.0.0.1:8000
+gunicorn_workers: 2
+
+dns_bind: 127.0.0.1
+dns_port: 5353
+nsd_bind: 0.0.0.0
+nsd_port: 53
+allow_localhost_xfr: true
+secondaries: []
+
+trusted_proxies:
+  - 172.28.9.0/24
+
+trust_anchor_file: /app/deploy/root-anchors.ds
+grace_days: 90
+max_body_bytes: 1048576
+max_rrsets: 2000
+max_names: 1000
+max_rdata_bytes: 4096
+data_dir: /opt/data
+health_check_dns: true

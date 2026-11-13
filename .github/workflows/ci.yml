@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check src tests
+      - name: Test
+        run: python -m pytest
+
+  read-only-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t dns-host:ci .
+      - name: Start read-only and check the daemons
+        run: |
+          set -eu
+          docker run -d --name dns-host-ci \
+            --read-only \
+            --tmpfs /run \
+            --tmpfs /tmp \
+            --cap-add NET_BIND_SERVICE \
+            -v "$PWD/deploy/config.example.yaml:/opt/data/etc/config.yaml:ro" \
+            -v dns-ci-data:/opt/data \
+            dns-host:ci
+          cleanup() {
+            echo "---- docker logs ----"
+            docker logs dns-host-ci || true
+            echo "---- docker diff ----"
+            docker diff dns-host-ci || true
+            docker rm -f dns-host-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          ok=0
+          for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+            if docker exec dns-host-ci python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1/health', timeout=2).read()"; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ok" = 1
+          docker exec -i dns-host-ci python3 - <<'PY'
+          import socket
+          import time
+          import dns.message
+          import dns.query
+          import dns.rcode
+          import dns.rdatatype
+
+          for port in (80, 8081, 5353, 53):
+              socket.create_connection(("127.0.0.1", port), 3).close()
+          deadline = time.time() + 20
+          last = None
+          while time.time() < deadline:
+              query = dns.message.make_query("catalog.example.net.", dns.rdatatype.SOA)
+              try:
+                  response = dns.query.udp(query, "127.0.0.1", port=53, timeout=2)
+              except Exception as exc:
+                  last = exc
+                  time.sleep(1)
+                  continue
+              if response.rcode() == dns.rcode.NOERROR and any(
+                  rrset.rdtype == dns.rdatatype.SOA for rrset in response.answer
+              ):
+                  break
+              last = response
+              time.sleep(1)
+          else:
+              raise SystemExit(f"NSD did not serve catalog SOA: {last}")
+          PY
+          docker exec dns-host-ci sh -c 'ps w | grep -E "[n]ginx|[n]sd|[g]unicorn|[s]yslogd"'
+          readonly=$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' dns-host-ci)
+          test "$readonly" = "true"
+          diff=$(docker diff dns-host-ci || true)
+          if [ -n "$diff" ]; then
+            echo "container root filesystem changed:"
+            printf '%s\n' "$diff"
+            exit 1
+          fi
+          docker exec dns-host-ci sh -c 'test -f /opt/data/log/messages && test -d /opt/data/nsd && test -d /opt/data/zones && test -d /run && test -d /tmp'

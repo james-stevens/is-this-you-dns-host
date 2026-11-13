@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+mkdir -p /opt/data/nsd/zones /opt/data/nsd/xfr /run
+exec python3 -m dns_host.serve_nsd

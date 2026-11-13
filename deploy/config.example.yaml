@@ -1,0 +1,56 @@
+# Operator configuration. Mount this file at /opt/data/etc/config.yaml.
+# A missing file is treated as empty and the process refuses to start until
+# service_ns is set. The image copies this example into place on first boot
+# when the file is absent. TSIG secrets may be inline or in tsig_secret_file.
+# They are never read from a zone upload.
+
+service_ns:
+  - ns1.example.net.
+  - ns2.example.net.
+
+catalog_zone: catalog.example.net.
+catalog_rname: hostmaster.example.net.
+resolver_base_url: https://api.isthisyou.org/
+
+# Public HTTP (plain). TLS terminates in front of the container.
+http_port: 80
+# Localhost only. nginx presents /int/ as /api/ here.
+internal_http_port: 8081
+gunicorn_bind: 127.0.0.1:8000
+gunicorn_workers: 2
+
+# Hidden master. Not published.
+dns_bind: 127.0.0.1
+dns_port: 5353
+# Public relay. NSD transfers from the master, then serves secondaries.
+nsd_bind: 0.0.0.0
+nsd_port: 53
+allow_localhost_xfr: true
+
+# One list. provide-xfr and notify are generated from these entries.
+# secondaries:
+#   - ip: 192.0.2.10
+#     port: 53
+#     tsig_key_name: transfer.example.
+#     tsig_secret_file: /opt/data/secrets/transfer.key
+#     tsig_algo: hmac-sha256
+secondaries: []
+
+# Set this to the TLS shedder network when using docker-compose.tls.yml.
+# The easy-nginx overlay uses 172.28.9.0/24.
+trusted_proxies: []
+
+trust_anchor_file: /app/deploy/root-anchors.ds
+grace_days: 90
+max_body_bytes: 1048576
+max_rrsets: 2000
+max_names: 1000
+max_rdata_bytes: 4096
+rate_limit_requests: 30
+rate_limit_window_seconds: 60
+parent_query_budget: 15
+parent_query_window_seconds: 60
+ds_digest_types:
+  - 2
+health_check_dns: true
+data_dir: /opt/data

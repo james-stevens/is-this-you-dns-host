@@ -1,0 +1,49 @@
+# Optional TLS terminator. Not used by `docker compose up` on its own.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up
+#
+# The terminator owns host ports 80 and 443. This overlay stops publishing
+# the service's port 80 on the host; secondaries still use host port 53.
+# dns-host stays on port 80 inside the compose network.
+#
+# This is jamesstevens/easy-nginx (https://github.com/james-stevens/easy-nginx),
+# MIT. It terminates TLS. This service does not. Use deploy/config.tls.yaml
+# so trusted_proxies is the network below (X-Forwarded-For only from the
+# terminator). The base file bind-mounts deploy/config.example.yaml; this
+# file replaces that mount.
+#
+# easy-nginx is read-only. Do not set NGINX_PLAIN_WEB=Y. Mode W in
+# nginx.input sets X-Forwarded-For and X-Forwarded-Proto. Put the certificate
+# and the private key in one PEM at deploy/easy-nginx/pems/upload.pem.
+
+services:
+  dns-host:
+    networks:
+      - edge
+    ports: !override
+      - "53:53/udp"
+      - "53:53/tcp"
+    volumes: !override
+      - zone-data:/opt/data
+      - ./deploy/config.tls.yaml:/opt/data/etc/config.yaml:ro
+
+  tls-terminator:
+    image: jamesstevens/easy-nginx
+    read_only: true
+    depends_on:
+      - dns-host
+    environment:
+      NGINX_NO_LOGGING: "N"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/easy-nginx:/opt/data
+    networks:
+      - edge
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.28.9.0/24

@@ -1,0 +1,2 @@
+#!/bin/sh
+killall nginx nsd gunicorn python3 syslogd 2>/dev/null || true

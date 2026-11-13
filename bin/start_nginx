@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+i=0
+while [ ! -S /dev/log ] && [ "$i" -lt 50 ]; do
+  i=$((i + 1))
+  sleep 0.1
+done
+mkdir -p /run /tmp/nginx-body /tmp/nginx-proxy /tmp/nginx-fastcgi /tmp/nginx-uwsgi /tmp/nginx-scgi
+exec python3 -m dns_host.serve_nginx

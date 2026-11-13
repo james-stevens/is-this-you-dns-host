@@ -1,0 +1,24 @@
+# Plain HTTP and DNS. The root filesystem is read-only. Persistent state is
+# the /opt/data volume. /run and /tmp are the only tmpfs mounts.
+# TLS is terminated in front of this service (see docker-compose.tls.yml).
+
+services:
+  dns-host:
+    build: .
+    read_only: true
+    cap_add:
+      # NSD binds 53 and nginx binds 80, then NSD drops to the nsd user.
+      - NET_BIND_SERVICE
+    tmpfs:
+      - /run
+      - /tmp
+    ports:
+      - "80:80"
+      - "53:53/udp"
+      - "53:53/tcp"
+    volumes:
+      - zone-data:/opt/data
+      - ./deploy/config.example.yaml:/opt/data/etc/config.yaml:ro
+
+volumes:
+  zone-data:
