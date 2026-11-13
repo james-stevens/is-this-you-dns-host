@@ -33,9 +33,6 @@ def _key(name, rdtype, server) -> tuple[str, str, str]:
 
 def _pack(rrset, sigs=None, section="answer") -> list[LookupRR]:
     items = []
-    records = list(rrset)
-    if sigs is not None:
-        records = list(rrset)  # data only; sigs added below
     for rdata in rrset:
         items.append(_rr(rrset.name, rrset.rdtype, rrset.ttl, rdata))
     if sigs is not None:
@@ -195,7 +192,7 @@ class Lab:
                 "extras",
                 [
                     (f"_auth.7e9a2f4c8b1d.{self.apex.to_text()}", "TXT", ['"v=dnsauth1 alg=ES256 k=example"']),
-                    (f"_web._tcp.{self.apex.to_text()}", "URI", ['10 1 "https://example.org/j"']),
+                    (self.apex.to_text(), "URI", ['10 1 "https://example.org/j"']),
                 ],
             ),
             nsec3=kwargs.get("nsec3", True),

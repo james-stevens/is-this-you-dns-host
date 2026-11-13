@@ -112,3 +112,113 @@ def dns_dnskey():
     import dns.rdatatype
 
     return dns.rdatatype.DNSKEY
+
+
+class RemoteMaintenance:
+    """90-day clear-out running on the DNS side.
+
+    Decisions are made here. Deletes and parent-state updates are POSTed to
+    the API, which is the only writer of zone files and the catalogue.
+    """
+
+    def __init__(self, settings, lookup=None):
+        from dns_host.doh import DohClient
+
+        self.settings = settings
+        self.lookup = lookup or DohClient(settings.resolver_base_url, settings.doh_timeout_seconds)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._loop, name="maintenance", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.run_once()
+            except Exception as exc:
+                log("error", "maintenance failed", error=str(exc))
+            self._stop.wait(self.settings.maintenance_interval_seconds)
+
+    def run_once(self) -> None:
+        meta = _api(self.settings, "GET", "/int/zones/meta")
+        now = self.settings.now()
+        for row in meta.get("zones", []):
+            if now > int(row["rrsig_max_expiry"]) + self.settings.grace_seconds:
+                _api(
+                    self.settings,
+                    "POST",
+                    "/int/zones/drop",
+                    {"apexes": [row["apex"]], "reason": "rrsig grace elapsed"},
+                )
+                continue
+            self._recheck(row, now)
+
+    def _recheck(self, row, now: int) -> None:
+        import json
+        from pathlib import Path
+
+        from dns_host.chain import authenticate_parent
+        from dns_host.names import normalise_name
+        from dns_host.zone import document_to_zone
+        from dns_host.zonesync import zone_filename
+
+        path = Path(self.settings.data_dir) / "zones" / zone_filename(row["apex"])
+        if not path.is_file():
+            return
+        document = json.loads(path.read_text(encoding="utf-8"))
+        apex = normalise_name(row["apex"])
+        zone = document_to_zone(apex, document)
+        try:
+            delegation = authenticate_parent(self.lookup, self.settings, apex)
+        except ApiError as exc:
+            if exc.status == 503 or exc.error == "parent_lookup_unavailable":
+                log("warning", "parent recheck unavailable", apex=row["apex"], error=exc.error)
+                return
+            self._drift(row, now, exc.error)
+            return
+        if _delegation_matches(zone, delegation, self.settings):
+            _api(
+                self.settings,
+                "POST",
+                "/int/zones/parent-state",
+                {"apex": row["apex"], "ok": True, "drift_since": None},
+            )
+            return
+        self._drift(row, now, "parent DS or NS no longer matches")
+
+    def _drift(self, row, now: int, reason: str) -> None:
+        since = row["parent_drift_since"] if row.get("parent_drift_since") is not None else now
+        _api(
+            self.settings,
+            "POST",
+            "/int/zones/parent-state",
+            {"apex": row["apex"], "ok": False, "drift_since": since},
+        )
+        log("info", "parent drift", apex=row["apex"], reason=reason, since=since)
+        if now > int(since) + self.settings.grace_seconds:
+            _api(
+                self.settings,
+                "POST",
+                "/int/zones/drop",
+                {"apexes": [row["apex"]], "reason": "parent drift grace elapsed"},
+            )
+
+
+def _api(settings, method: str, path: str, payload: dict | None = None):
+    import json
+    import urllib.request
+
+    url = "http://" + settings.gunicorn_bind + path
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))

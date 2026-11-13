@@ -52,6 +52,7 @@ def test_axfr_allow_deny_and_catalog_member(env):
         assert ixfr.rcode() == dns.rcode.NOTIMP
 
         env.settings.secondaries = [("192.0.2.10", 53)]
+        env.settings.allow_localhost_xfr = False
         denied = dns.query.tcp(
             dns.message.make_query("user.example.", "AXFR"),
             "127.0.0.1",

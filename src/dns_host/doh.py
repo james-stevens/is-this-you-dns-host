@@ -1,6 +1,6 @@
 """DNS lookup interface and the Web3DNS-compatible DoH JSON client.
 
-Only the parameters documented for https://api.web3dns.net/ are sent:
+Only the parameters documented for https://api.isthisyou.org/ are sent:
 ``name``, ``type``, ``do``, ``rd``, ``server``, ``cd``. No other paths or
 query parameters are invented. ``do=1`` responses may carry base64 ``rdata``;
 that wire form is preferred over presentation text.

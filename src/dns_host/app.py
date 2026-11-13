@@ -12,6 +12,7 @@ import dns.rcode
 from flask import Flask, jsonify, request
 
 from dns_host.admit import admit
+from dns_host.catalog import catalog_soa
 from dns_host.config import Settings
 from dns_host.doh import DohClient
 from dns_host.errors import ApiError
@@ -24,7 +25,7 @@ _LOOPBACK = {"127.0.0.1", "::1"}
 
 
 def create_app(settings: Settings | None = None, lookup=None, store: Store | None = None, notifier=None) -> Flask:
-    settings = settings or Settings.from_env()
+    settings = settings or Settings.load()
     if store is None:
         store = Store(settings.db_path)
     store.ensure_catalog(settings.now())
@@ -124,6 +125,62 @@ def create_app(settings: Settings | None = None, lookup=None, store: Store | Non
         except ApiError as exc:
             return jsonify(exc.as_dict()), exc.status
         return jsonify(payload), status
+
+    @app.get("/int/zones/meta")
+    def zones_meta():
+        zones = []
+        for row in store.list_zones():
+            zones.append(
+                {
+                    "apex": row.apex,
+                    "serial": row.serial,
+                    "rrsig_max_expiry": row.rrsig_max_expiry,
+                    "rrsig_min_expiry": row.rrsig_min_expiry,
+                    "parent_ok": row.parent_ok,
+                    "parent_drift_since": row.parent_drift_since,
+                    "parent_zone": row.parent_zone,
+                }
+            )
+        return jsonify(zones=zones, catalogSerial=store.catalog_serial())
+
+    @app.post("/int/zones/drop")
+    def drop_zones():
+        body = request.get_json(silent=True) or {}
+        apexes = body.get("apexes") or []
+        reason = str(body.get("reason") or "dropped")
+        if not isinstance(apexes, list) or not apexes:
+            return jsonify(error="bad_request", message="apexes must be a non-empty list"), 400
+        dropped = []
+        for apex in apexes:
+            serial = store.delete_zone(str(apex), settings.now())
+            if serial is None:
+                continue
+            store.incr("zones_dropped")
+            log("info", "zone dropped", apex=str(apex), reason=reason, catalog_serial=serial)
+            try:
+                notifier.notify(settings.catalog_zone.to_text(), catalog_soa(settings, serial))
+            except Exception as exc:
+                log("warning", "catalog NOTIFY after drop failed", apex=str(apex), error=str(exc))
+            dropped.append(str(apex))
+        return jsonify(dropped=dropped)
+
+    @app.post("/int/zones/parent-state")
+    def parent_state():
+        body = request.get_json(silent=True) or {}
+        apex = body.get("apex")
+        if not apex:
+            return jsonify(error="bad_request", message="apex is required"), 400
+        drift = body.get("drift_since")
+        if drift is not None:
+            drift = int(drift)
+        store.set_parent_state(str(apex), now=settings.now(), ok=bool(body.get("ok")), drift_since=drift)
+        return jsonify(ok=True)
+
+    app.add_url_rule("/ext/health", endpoint="ext_health", view_func=health, methods=["GET"])
+    app.add_url_rule("/int/health", endpoint="int_health", view_func=health, methods=["GET"])
+    app.add_url_rule("/ext/metrics", endpoint="ext_metrics", view_func=metrics, methods=["GET"])
+    app.add_url_rule("/int/metrics", endpoint="int_metrics", view_func=metrics, methods=["GET"])
+    app.add_url_rule("/ext/v1/zones/<path:apex>", endpoint="ext_upload", view_func=upload, methods=["POST"])
 
     @app.errorhandler(413)
     def too_large(_exc):

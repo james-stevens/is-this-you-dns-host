@@ -1,5 +1,3 @@
-import json
-
 from tests.conftest import post
 
 
@@ -25,9 +23,11 @@ def test_valid_zone_is_admitted_and_catalog_is_notified_first(env):
     assert len(env.lab.calls) > before
 
 
-def test_nsec_zone_is_accepted_for_experiments(env):
+def test_nsec_zone_is_rejected(env):
     response = post(env, env.lab.zone(nsec3=False, serial=env.clock.t + 3))
-    assert response.status_code == 201, response.get_json()
+    assert response.status_code == 422, response.get_json()
+    assert response.get_json()["error"] == "type_not_allowed"
+    assert env.lab.calls == []
 
 
 def test_health_and_metrics(env):

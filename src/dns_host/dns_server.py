@@ -24,6 +24,7 @@ import dns.tsigkeyring
 from dns_host.catalog import catalog_rrsets
 from dns_host.logutil import log
 from dns_host.zone import document_to_zone
+from dns_host.zonesync import ZoneIndex
 
 _TSIG_ALGORITHMS = {
     "hmac-sha256": dns.tsig.HMAC_SHA256,
@@ -42,6 +43,7 @@ class DnsServer:
         self.tcp: socket.socket | None = None
         self.udp: socket.socket | None = None
         self.port = settings.dns_port
+        self.index = ZoneIndex(settings, store)
 
     def start(self) -> int:
         bind = self.settings.dns_bind
@@ -56,9 +58,11 @@ class DnsServer:
         self.udp.bind((bind, self.port))
         self.tcp.settimeout(0.5)
         self.udp.settimeout(0.5)
+        self.index.refresh()
         self._threads = [
             threading.Thread(target=self._udp_loop, name="dns-udp", daemon=True),
             threading.Thread(target=self._tcp_loop, name="dns-tcp", daemon=True),
+            threading.Thread(target=self._poll_loop, name="dns-catalogue", daemon=True),
         ]
         for thread in self._threads:
             thread.start()
@@ -75,6 +79,13 @@ class DnsServer:
                     pass
         for thread in self._threads:
             thread.join(timeout=2)
+
+    def _poll_loop(self) -> None:
+        while not self._stop.wait(1.0):
+            try:
+                self.index.refresh()
+            except Exception as exc:
+                log("error", "catalogue poll failed", error=str(exc))
 
     def _udp_loop(self) -> None:
         while not self._stop.is_set():
@@ -128,6 +139,7 @@ class DnsServer:
         except Exception:
             refused = _bare_response(data, dns.rcode.REFUSED)
             return [refused] if tcp else refused
+        self.index.refresh()
         if query.had_tsig and query.tsig_error:
             wire = _error_response(query, dns.rcode.REFUSED).to_wire()
             return [wire] if tcp else wire
@@ -176,27 +188,46 @@ class DnsServer:
             return True
         if self.settings.axfr_require_tsig:
             return False
+        if self.settings.allow_localhost_xfr and _is_loopback(peer):
+            return True
         return _ip_allowed(peer, self.settings.allowed_axfr_ips)
+
+    def _catalog_serial(self) -> int:
+        if self.index.loaded:
+            return self.index.catalog_serial
+        return self.store.catalog_serial()
+
+    def _members(self) -> list[str]:
+        if self.index.loaded:
+            return self.index.member_names()
+        return self.store.list_members()
+
+    def _zone(self, name: dns.name.Name):
+        text = name.to_text().lower()
+        if self.index.loaded:
+            return self.index.zones.get(text)
+        row = self.store.get_zone(text)
+        if row is None:
+            return None
+        return document_to_zone(name, row.document)
 
     def _soa(self, name: dns.name.Name):
         text = name.to_text().lower()
         if text == self.settings.catalog_zone.to_text():
-            return catalog_rrsets(self.settings, self.store.catalog_serial(), [])[0]
-        row = self.store.get_zone(text)
-        if row is None:
+            return catalog_rrsets(self.settings, self._catalog_serial(), [])[0]
+        zone = self._zone(name)
+        if zone is None:
             return None
-        zone = document_to_zone(name, row.document)
         return zone.get(dns.rdatatype.SOA)
 
     def _axfr(self, query, name: dns.name.Name):
         text = name.to_text().lower()
         if text == self.settings.catalog_zone.to_text():
-            rrsets = catalog_rrsets(self.settings, self.store.catalog_serial(), self.store.list_members())
+            rrsets = catalog_rrsets(self.settings, self._catalog_serial(), self._members())
         else:
-            row = self.store.get_zone(text)
-            if row is None:
+            zone = self._zone(name)
+            if zone is None:
                 return None
-            zone = document_to_zone(name, row.document)
             rrsets = zone.axfr_rrsets()
         if not rrsets:
             return None
@@ -232,22 +263,46 @@ class DnsServer:
         return wires
 
 
+def _configured_tsig_keys(settings) -> list[tuple[str, str, str]]:
+    found: list[tuple[str, str, str]] = []
+    if settings.tsig_secret and settings.tsig_key_name:
+        found.append((settings.tsig_key_name, settings.tsig_secret, settings.tsig_algo))
+    for secondary in settings.secondaries:
+        name = getattr(secondary, "tsig_key_name", "") or ""
+        secret = getattr(secondary, "tsig_secret", "") or ""
+        algo = getattr(secondary, "tsig_algo", "") or "hmac-sha256"
+        if name and secret:
+            found.append((name, secret, algo))
+    return found
+
+
 def _keyring(settings):
-    if not settings.tsig_secret or not settings.tsig_key_name:
+    keys = _configured_tsig_keys(settings)
+    if not keys:
         return None
-    algorithm = _TSIG_ALGORITHMS.get(settings.tsig_algo.lower(), dns.tsig.HMAC_SHA256)
-    keyname = dns.name.from_text(settings.tsig_key_name)
+    ring = {}
+    for name, secret, algo in keys:
+        algorithm = _TSIG_ALGORITHMS.get(str(algo).lower(), dns.tsig.HMAC_SHA256)
+        try:
+            parsed = dns.tsigkeyring.from_text({name: secret})
+        except Exception:
+            log("error", "TSIG secret is not valid base64", key=name)
+            continue
+        for keyname, key in parsed.items():
+            raw = key.secret if hasattr(key, "secret") else key
+            owner = key.name if hasattr(key, "name") else keyname
+            ring[keyname] = dns.tsig.Key(owner, raw, algorithm)
+    return ring or None
+
+
+def _is_loopback(peer: str) -> bool:
     try:
-        secret = dns.tsigkeyring.from_text({keyname.to_text(): settings.tsig_secret})
-    except Exception:
-        log("error", "TSIG secret is not valid base64", key=settings.tsig_key_name)
-        return None
-    # from_text stores raw secrets. Stamp the configured algorithm.
-    for name, key in list(secret.items()):
-        raw = key.secret if hasattr(key, "secret") else key
-        owner = key.name if hasattr(key, "name") else name
-        secret[name] = dns.tsig.Key(owner, raw, algorithm)
-    return secret
+        ip = ipaddress.ip_address(peer)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return bool(ip.is_loopback)
 
 
 def _ip_allowed(peer: str, allowed: set[str]) -> bool:
@@ -288,16 +343,24 @@ def _bare_response(data: bytes, rcode) -> bytes:
 
 
 def main() -> None:
-    from dns_host.config import Settings
-    from dns_host.maintenance import Maintenance
+    from dns_host.config import Settings, log_effective
+    from dns_host.maintenance import RemoteMaintenance
     from dns_host.storage import Store
 
-    settings = Settings.from_env()
+    settings = Settings.load()
+    settings.require_service_ns()
+    log_effective(settings)
+    if not _is_loopback(settings.dns_bind):
+        log("error", "refusing to start", error="dns master must bind a loopback address")
+        raise SystemExit("dns_bind must be a loopback address")
     store = Store(settings.db_path)
     store.ensure_catalog(settings.now())
     server = DnsServer(settings, store)
+    server.index.refresh()
+    if settings.manage_nsd:
+        server.index.write_nsd()
     server.start()
-    maintenance = Maintenance(settings, store)
+    maintenance = RemoteMaintenance(settings)
     maintenance.start()
     try:
         threading.Event().wait()

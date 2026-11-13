@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+mkdir -p /opt/data/zones /opt/data/nsd/zones
+exec python3 -m dns_host.dns_server

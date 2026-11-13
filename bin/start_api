@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+i=0
+while [ ! -S /dev/log ] && [ "$i" -lt 50 ]; do
+  i=$((i + 1))
+  sleep 0.1
+done
+exec python3 -m dns_host.serve_api

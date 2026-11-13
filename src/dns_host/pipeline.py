@@ -15,9 +15,9 @@ import dns.rdatatype
 import dns.rrset
 
 from dns_host.chain import Delegation, authenticate_parent
-from dns_host.denial import check_nsec, check_nsec3
+from dns_host.denial import check_nsec3
 from dns_host.errors import ApiError
-from dns_host.rrtypes import type_name
+from dns_host.rrtypes import WALLET_TYPE, admission_block_reason, type_name
 from dns_host.zone import ParsedZone
 
 DNSKEY = int(dns.rdatatype.DNSKEY)
@@ -30,7 +30,10 @@ RRSIG = int(dns.rdatatype.RRSIG)
 CNAME = int(dns.rdatatype.CNAME)
 A = int(dns.rdatatype.A)
 AAAA = int(dns.rdatatype.AAAA)
+URI = int(dns.rdatatype.URI)
 APEX_ONLY = {SOA, DNSKEY, NSEC3PARAM}
+APEX_ONLY_DATA = {URI, WALLET_TYPE}
+ALLOWED_DNSKEY_ALGS = {13, 15}
 
 
 def _err(status: int, error: str, message: str) -> ApiError:
@@ -74,18 +77,27 @@ def check_types_and_ttl(zone: ParsedZone, settings) -> None:
     allowed = {item.upper() for item in settings.type_allowlist}
     for (name, rdtype), rrset in zone.rrsets.items():
         text = type_name(rdtype)
+        blocked = admission_block_reason(rdtype)
+        if blocked is not None:
+            raise _err(422, "type_not_allowed", blocked)
         if text not in allowed:
             raise _err(422, "type_not_allowed", f"{text} is not in the type allowlist")
         if int(rrset.ttl) < settings.min_ttl or int(rrset.ttl) > settings.max_ttl:
             raise _err(422, "ttl_out_of_range", f"TTL {rrset.ttl} at {name} is outside the configured bounds")
+        for rdata in rrset:
+            _check_rdata_length(rdata, name, text, settings)
         if rdtype in APEX_ONLY and name != zone.apex:
             code = {SOA: "bad_soa", DNSKEY: "bad_dnskey", NSEC3PARAM: "bad_nsec3param"}[rdtype]
             raise _err(422, code, f"{text} is only permitted at the apex")
+        if int(rdtype) in APEX_ONLY_DATA and name != zone.apex:
+            raise _err(422, "type_not_allowed", f"{text} is only permitted at the zone apex")
         if rdtype == NS and name != zone.apex:
             raise _err(422, "type_not_allowed", "NS is only permitted at the apex")
     for (name, _covered), rrset in zone.sigs.items():
         if int(rrset.ttl) < settings.min_ttl or int(rrset.ttl) > settings.max_ttl:
             raise _err(422, "ttl_out_of_range", f"TTL {rrset.ttl} at {name} RRSIG is outside the configured bounds")
+        for rdata in rrset:
+            _check_rdata_length(rdata, name, "RRSIG", settings)
     by_name: dict = {}
     for (name, rdtype) in zone.rrsets:
         if rdtype in (NSEC3, NSEC):
@@ -96,14 +108,24 @@ def check_types_and_ttl(zone: ParsedZone, settings) -> None:
             raise _err(422, "type_not_allowed", f"CNAME at {name} shares its owner name with other data")
 
 
+def _check_rdata_length(rdata, name, text, settings) -> None:
+    length = len(rdata.to_wire())
+    if length > settings.max_rdata_bytes:
+        raise _err(
+            413,
+            "payload_too_large",
+            f"{text} rdata at {name} is {length} bytes; limit is {settings.max_rdata_bytes}",
+        )
+
+
 def check_dnskey(zone: ParsedZone) -> None:
     rrset = zone.get(DNSKEY)
     if rrset is None or len(rrset) == 0:
         raise _err(422, "bad_dnskey", "apex DNSKEY RRset is missing")
     saw_ksk = False
     for key in rrset:
-        if int(key.algorithm) != 13 or int(key.protocol) != 3:
-            raise _err(422, "bad_dnskey", "DNSKEY must use protocol 3 and algorithm 13")
+        if int(key.algorithm) not in ALLOWED_DNSKEY_ALGS or int(key.protocol) != 3:
+            raise _err(422, "bad_dnskey", "DNSKEY must use protocol 3 and algorithm 13 or 15")
         flags = int(key.flags)
         if flags not in (256, 257):
             raise _err(422, "bad_dnskey", "DNSKEY flags must be 256 (ZSK) or 257 (KSK)")
@@ -139,15 +161,15 @@ def check_rrsig_meta(zone: ParsedZone, settings) -> None:
 def _check_one_sig(sig, name, rdtype, ttl, keytags, apex, now, settings) -> None:
     if int(sig.type_covered) != int(rdtype):
         raise _err(422, "rrsig_key_mismatch", f"RRSIG at {name} covers the wrong type")
-    if int(sig.algorithm) != 13:
-        raise _err(422, "rrsig_key_mismatch", f"RRSIG at {name} is not algorithm 13")
+    if int(sig.algorithm) not in ALLOWED_DNSKEY_ALGS:
+        raise _err(422, "rrsig_key_mismatch", f"RRSIG at {name} is not algorithm 13 or 15")
     if sig.signer.canonicalize() != apex.canonicalize():
         raise _err(422, "rrsig_key_mismatch", f"RRSIG at {name} signer is not the apex")
     if int(sig.labels) != len(name) - 1:
         raise _err(422, "rrsig_key_mismatch", f"RRSIG at {name} has the wrong label count")
     if int(sig.original_ttl) != int(ttl):
         raise _err(422, "rrsig_key_mismatch", f"RRSIG at {name} original TTL does not match the RRset")
-    if (13, int(sig.key_tag)) not in keytags:
+    if (int(sig.algorithm), int(sig.key_tag)) not in keytags:
         raise _err(422, "rrsig_key_mismatch", f"RRSIG at {name} key tag {sig.key_tag} matches no DNSKEY")
     inception = int(sig.inception)
     expiration = int(sig.expiration)
@@ -173,16 +195,13 @@ def check_denial(zone: ParsedZone) -> None:
             nsec[name] = rrset
             continue
         owners.setdefault(name, set()).add(rdtype)
+    if nsec:
+        raise _err(422, "type_not_allowed", "plain NSEC zones are rejected; NSEC3 is required")
     param = zone.get(NSEC3PARAM)
-    if param is not None and nsec:
-        raise _err(422, "bad_nsec3param", "zone mixes NSEC and NSEC3")
     if param is not None or nsec3:
         if nsec3 and param is None:
             raise _err(422, "bad_nsec3param", "NSEC3 records require NSEC3PARAM")
         check_nsec3(zone.apex, owners, nsec3, param)
-        return
-    if nsec:
-        check_nsec(zone.apex, owners, nsec)
         return
     raise _err(422, "bad_nsec3param", "zone has no NSEC3PARAM")
 

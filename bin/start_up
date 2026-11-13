@@ -1,0 +1,21 @@
+#!/bin/sh
+# Prepare writable directories, then become busybox init (PID 1).
+# The root filesystem is read-only. Persistent data is /opt/data.
+# /run and /tmp are tmpfs mounts supplied by the runtime.
+set -eu
+mkdir -p \
+  /opt/data/log \
+  /opt/data/zones \
+  /opt/data/etc \
+  /opt/data/nsd/zones \
+  /opt/data/secrets \
+  /run \
+  /tmp/nginx-body \
+  /tmp/nginx-proxy \
+  /tmp/nginx-fastcgi \
+  /tmp/nginx-uwsgi \
+  /tmp/nginx-scgi
+if [ ! -f /opt/data/etc/config.yaml ]; then
+  cp /usr/local/share/dns-host/config.example.yaml /opt/data/etc/config.yaml
+fi
+exec /sbin/init

@@ -85,7 +85,7 @@ def test_resolver_base_url_override_is_used(env, tmp_path):
     assert response.get_json()["error"] == "parent_lookup_unavailable"
     assert seen
     assert all("do=1" in path and "rd=0" in path for path in seen)
-    assert all("api.web3dns.net" not in path for path in seen)
+    assert all("web3dns.net" not in path for path in seen)
     for path in seen:
         keys = set(part.split("=", 1)[0] for part in path.split("?", 1)[1].split("&"))
         assert keys <= {"name", "type", "do", "rd", "cd", "server"}

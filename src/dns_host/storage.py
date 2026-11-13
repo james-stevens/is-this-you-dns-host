@@ -118,8 +118,11 @@ class Store:
             row = conn.execute("SELECT serial FROM catalog WHERE id = 1").fetchone()
             if row is None:
                 conn.execute("INSERT INTO catalog (id, serial) VALUES (1, ?)", (now,))
-                return now
-            return int(row["serial"])
+                serial = now
+            else:
+                serial = int(row["serial"])
+        self.republish_all()
+        return serial
 
     def catalog_serial(self) -> int:
         with self._read() as conn:
@@ -227,7 +230,9 @@ class Store:
                     ),
                 )
             catalog_serial = self._bump_catalog(conn, now) if is_new else self._catalog_serial(conn)
-            return is_new, catalog_serial
+            result = (is_new, catalog_serial)
+        self.publish_member(apex, document)
+        return result
 
     def _catalog_serial(self, conn: sqlite3.Connection) -> int:
         row = conn.execute("SELECT serial FROM catalog WHERE id = 1").fetchone()
@@ -264,8 +269,13 @@ class Store:
         with self.transaction() as conn:
             deleted = conn.execute("DELETE FROM zones WHERE apex = ?", (apex,)).rowcount
             if not deleted:
-                return None
-            return self._bump_catalog(conn, now)
+                serial = None
+            else:
+                serial = self._bump_catalog(conn, now)
+        if serial is None:
+            return None
+        self.unpublish_member(apex)
+        return serial
 
     def allow_rate(self, bucket: str, limit: int, window: int, now: int) -> bool:
         if limit <= 0:
@@ -360,6 +370,41 @@ class Store:
                 "SELECT value FROM counters WHERE name = ?", (name,)
             ).fetchone()
         return int(row["value"]) if row else 0
+
+    def zones_directory(self) -> Path:
+        return self.path.parent / "zones"
+
+    def publish_member(self, apex: str, document: dict) -> None:
+        from dns_host.zonesync import write_catalogue, write_member
+
+        directory = self.zones_directory()
+        write_member(directory, apex, document)
+        write_catalogue(directory, self.catalog_serial(), self._catalogue_members())
+
+    def unpublish_member(self, apex: str) -> None:
+        from dns_host.zonesync import write_catalogue, zone_filename
+
+        directory = self.zones_directory()
+        write_catalogue(directory, self.catalog_serial(), self._catalogue_members())
+        (directory / zone_filename(apex)).unlink(missing_ok=True)
+
+    def republish_all(self) -> None:
+        from dns_host.zonesync import write_catalogue, write_member, zone_filename
+
+        directory = self.zones_directory()
+        directory.mkdir(parents=True, exist_ok=True)
+        keep: set[str] = set()
+        for row in self.list_zones():
+            write_member(directory, row.apex, row.document)
+            keep.add(zone_filename(row.apex))
+        for path in directory.glob("*.json"):
+            if path.name == "catalogue.json" or path.name in keep:
+                continue
+            path.unlink()
+        write_catalogue(directory, self.catalog_serial(), self._catalogue_members())
+
+    def _catalogue_members(self) -> list[dict]:
+        return [{"apex": row.apex, "serial": row.serial} for row in self.list_zones()]
 
     def zones_in_grace(self, now: int) -> int:
         with self._read() as conn:

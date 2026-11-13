@@ -13,17 +13,26 @@ import dns.rdataclass
 import dns.rdata
 import dns.rdatatype
 import dns.rrset
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from dns_host.denial import expected_types, hash_label, zone_names_and_ents
 from dns_host.rrtypes import rdata_from_text
 
-ALG = dns.dnssec.ECDSAP256SHA256
 
+def generate_key(flags: int, algorithm: int = 13):
+    """Algorithm 13 is ECDSA P-256. Algorithm 15 is Ed25519."""
 
-def generate_key(flags: int):
-    private = ec.generate_private_key(ec.SECP256R1())
-    dnskey = dns.dnssec.make_dnskey(private.public_key(), ALG, flags=flags)
+    if int(algorithm) == 13:
+        private = ec.generate_private_key(ec.SECP256R1())
+        public = private.public_key()
+        alg = dns.dnssec.ECDSAP256SHA256
+    elif int(algorithm) == 15:
+        private = ed25519.Ed25519PrivateKey.generate()
+        public = private.public_key()
+        alg = dns.dnssec.ED25519
+    else:
+        raise ValueError("zone-signing algorithm must be 13 or 15")
+    dnskey = dns.dnssec.make_dnskey(public, alg, flags=flags)
     return private, dnskey
 
 

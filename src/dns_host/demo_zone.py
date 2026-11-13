@@ -52,7 +52,6 @@ def main(argv: list[str] | None = None) -> None:
         ttl=args.ttl,
         extras=[
             (f"_auth.7e9a2f4c8b1d.{apex}", "TXT", ['"v=dnsauth1 alg=ES256 k=example"']),
-            (f"_web._tcp.{apex}", "URI", ['10 1 "https://example.org/j"']),
             (apex, "URI", ['10 1 "https://example.org/j"']),
             (
                 apex,

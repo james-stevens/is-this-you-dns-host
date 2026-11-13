@@ -12,7 +12,7 @@ import dns.rrset
 
 from dns_host.errors import ApiError
 from dns_host.names import name_in_bailiwick, normalise_apex, normalise_name
-from dns_host.rrtypes import parse_type, rdata_from_text
+from dns_host.rrtypes import admission_block_reason, parse_type, rdata_from_text
 
 RRSIG = dns.rdatatype.RRSIG
 
@@ -158,6 +158,9 @@ def parse_upload(body: dict, url_apex: dns.name.Name) -> ParsedZone:
             rdtype = parse_type(str(item["type"]))
         except Exception as exc:
             raise ApiError(400, "bad_request", f"rrsets[{index}].type is not a DNS type") from exc
+        blocked = admission_block_reason(rdtype)
+        if blocked is not None:
+            raise ApiError(422, "type_not_allowed", blocked)
         if not isinstance(item["ttl"], int) or isinstance(item["ttl"], bool) or item["ttl"] < 0:
             raise ApiError(400, "bad_request", f"rrsets[{index}].ttl must be a non-negative integer")
         datas = item["rrdatas"]

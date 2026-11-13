@@ -1,8 +1,9 @@
-"""Offline NSEC3 (RFC 5155 / RFC 9276) and experimental NSEC chain checks.
+"""Offline NSEC3 checks (RFC 5155 / RFC 9276).
 
 NSEC3 parameters required for admission: hash algorithm 1, flags 0 (Opt-Out
 off), iterations 0, empty salt. The chain must cover every authoritative
 owner name and every empty non-terminal, and must be a single cycle.
+Plain NSEC zones are rejected before this walk.
 """
 
 from __future__ import annotations

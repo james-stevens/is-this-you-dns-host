@@ -13,4 +13,4 @@
 # easy-nginx points ssl_certificate and ssl_certificate_key at that same file.
 #
 # Replace upload.example.net with the public name of this host.
-W upload http://dns-host:8080 upload.example.net
+W upload http://dns-host:80 upload.example.net

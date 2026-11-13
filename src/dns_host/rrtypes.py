@@ -130,4 +130,112 @@ def rdata_from_text(rdtype, text: str, origin=None):
     return dns.rdata.GenericRdata(dns.rdataclass.IN, rdtype, _encode_strings(strings))
 
 
+# Current standard zone RR types (IANA), plus WALLET (262). Plain NSEC is a
+# standard type but is rejected by policy: user zones are NSEC3-only.
+# Meta-types (OPT, TSIG, ANY, IXFR, AXFR, ...) are absent on purpose.
+STANDARD_ZONE_TYPES = frozenset(
+    {
+        "A",
+        "AAAA",
+        "AFSDB",
+        "AMTRELAY",
+        "APL",
+        "CAA",
+        "CDNSKEY",
+        "CDS",
+        "CERT",
+        "CNAME",
+        "CSYNC",
+        "DHCID",
+        "DNAME",
+        "DNSKEY",
+        "DS",
+        "DSYNC",
+        "EUI48",
+        "EUI64",
+        "HIP",
+        "HTTPS",
+        "IPSECKEY",
+        "KX",
+        "L32",
+        "L64",
+        "LOC",
+        "LP",
+        "MX",
+        "NAPTR",
+        "NID",
+        "NS",
+        "NSEC3",
+        "NSEC3PARAM",
+        "NXNAME",
+        "OPENPGPKEY",
+        "PTR",
+        "RESINFO",
+        "RP",
+        "RRSIG",
+        "SMIMEA",
+        "SOA",
+        "SRV",
+        "SSHFP",
+        "SVCB",
+        "TLSA",
+        "TXT",
+        "URI",
+        "WALLET",
+        "ZONEMD",
+    }
+)
+
+# Obsolete, experimental, or otherwise not accepted in an uploaded zone.
+OBSOLETE_OR_EXPERIMENTAL = frozenset(
+    {
+        "A6",
+        "ATMA",
+        "DLV",
+        "EID",
+        "GPOS",
+        "HINFO",
+        "ISDN",
+        "KEY",
+        "MAILA",
+        "MAILB",
+        "MB",
+        "MD",
+        "MF",
+        "MG",
+        "MINFO",
+        "MR",
+        "NIMLOC",
+        "NSAP",
+        "NSAP-PTR",
+        "NULL",
+        "NXT",
+        "PX",
+        "SIG",
+        "SINK",
+        "SPF",
+        "WKS",
+        "X25",
+    }
+)
+
+DEFAULT_TYPES = ",".join(sorted(STANDARD_ZONE_TYPES))
+
+
+def admission_block_reason(rdtype) -> str | None:
+    """Why this type must be rejected before signature checks, or None."""
+
+    number = int(rdtype)
+    if 65280 <= number <= 65535:
+        return f"type {number} is private-use or reserved"
+    name = type_name(rdtype)
+    if name == "NSEC":
+        return "plain NSEC zones are rejected; NSEC3 is required"
+    if name in OBSOLETE_OR_EXPERIMENTAL:
+        return f"{name} is obsolete or experimental"
+    if name not in STANDARD_ZONE_TYPES:
+        return f"{name} is not a current standard RR type"
+    return None
+
+
 ensure_wallet_type()
